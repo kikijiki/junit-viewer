@@ -1,6 +1,7 @@
 import CancelIcon from "@mui/icons-material/Cancel";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import SkipNextIcon from "@mui/icons-material/SkipNext";
 import {
   Box,
@@ -9,9 +10,10 @@ import {
   Stack,
   Tabs,
   Tab,
+  IconButton,
 } from "@mui/material";
 import React, { useState, useMemo } from "react";
-import { Virtuoso } from 'react-virtuoso';
+import { Virtuoso } from "react-virtuoso";
 
 import { JUnitReport } from "../types/junit";
 
@@ -20,39 +22,54 @@ import { TestCaseItem } from "./TestCaseItem";
 
 interface TestReportProps {
   report: JUnitReport;
+  path?: string;
+  onReload?: () => void;
 }
 
-export function TestReport({ report }: TestReportProps) {
-  const [filters, setFilters] = useState<string[]>(['passed', 'failed', 'error', 'skipped']);
+export function TestReport({ report, path, onReload }: TestReportProps) {
+  const [filters, setFilters] = useState<string[]>([
+    "passed",
+    "failed",
+    "error",
+    "skipped",
+  ]);
   const [activeTab, setActiveTab] = useState(0);
 
-  const successRate = report.tests > 0 ? 
-    ((report.tests - report.failures - report.errors - report.skipped) / report.tests) * 100 : 
-    0;
+  const successRate =
+    report.tests > 0
+      ? ((report.tests - report.failures - report.errors - report.skipped) /
+          report.tests) *
+        100
+      : 0;
   const successCount =
     report.tests - report.failures - report.errors - report.skipped;
 
   const toggleFilter = (filter: string) => {
-    setFilters(prev => {
+    setFilters((prev) => {
       if (prev.includes(filter)) {
-        return prev.filter(f => f !== filter);
+        return prev.filter((f) => f !== filter);
       }
       return [...prev, filter];
     });
   };
 
   const filteredTestcases = useMemo(() => {
-    return report.testsuites.map(suite => ({
-
+    return report.testsuites.map((suite) => ({
       ...suite,
-      testcases: suite.testcases.filter(test => {
+      testcases: suite.testcases.filter((test) => {
         if (filters.length === 0) return true;
-        if (filters.includes("passed") && !test.failure && !test.error && !test.skipped) return true;
+        if (
+          filters.includes("passed") &&
+          !test.failure &&
+          !test.error &&
+          !test.skipped
+        )
+          return true;
         if (filters.includes("failed") && test.failure) return true;
         if (filters.includes("error") && test.error) return true;
         if (filters.includes("skipped") && test.skipped) return true;
         return false;
-      })
+      }),
     }));
   }, [report.testsuites, filters]);
 
@@ -61,18 +78,25 @@ export function TestReport({ report }: TestReportProps) {
   };
 
   return (
-    <Box sx={{ display: 'flex', height: '100%' }}>
-      <Box sx={{
-        borderRight: 1,
-        borderColor: 'divider',
-        minWidth: 300,
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
-        <Box sx={{ pr: 1, pb:1, borderBottom: 1, borderColor: 'divider' }}>
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>
-            SUMMARY
-          </Typography>
+    <Box sx={{ display: "flex", height: "100%" }}>
+      <Box
+        sx={{
+          borderRight: 1,
+          borderColor: "divider",
+          minWidth: 300,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <Box sx={{ pr: 1, pb: 1, borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="subtitle1">SUMMARY</Typography>
+            {onReload && (
+              <IconButton size="small" onClick={onReload} title="Reload">
+                <RefreshIcon fontSize="small" />
+              </IconButton>
+            )}
+          </Box>
           <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
             <Typography variant="body2" color="success.main">
               {successCount} passed
@@ -114,28 +138,30 @@ export function TestReport({ report }: TestReportProps) {
           value={activeTab}
           onChange={handleTabChange}
           sx={{
-            '& .MuiTab-root': {
-              alignItems: 'flex-start',
-              textAlign: 'left'
-            }
+            "& .MuiTab-root": {
+              alignItems: "flex-start",
+              textAlign: "left",
+            },
           }}
         >
           {report.testsuites.map((suite, index) => (
             <Tab
               key={index}
               label={
-                <Box sx={{ 
-                  width: '100%',
-                  minWidth: 0
-                }}>
+                <Box
+                  sx={{
+                    width: "100%",
+                    minWidth: 0,
+                  }}
+                >
                   <Typography
                     sx={{
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      width: '100%',
-                      direction: 'rtl',
-                      textAlign: 'left'
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      width: "100%",
+                      direction: "rtl",
+                      textAlign: "left",
                     }}
                     title={suite.name}
                   >
@@ -143,7 +169,11 @@ export function TestReport({ report }: TestReportProps) {
                   </Typography>
                   <Stack direction="row" spacing={1}>
                     <Typography variant="body2" color="success.main">
-                      {suite.tests - suite.failures - suite.errors - suite.skipped} passed
+                      {suite.tests -
+                        suite.failures -
+                        suite.errors -
+                        suite.skipped}{" "}
+                      passed
                     </Typography>
                     {suite.failures > 0 && (
                       <Typography variant="body2" color="error.main">
@@ -164,12 +194,35 @@ export function TestReport({ report }: TestReportProps) {
                   <Box sx={{ display: "flex", alignItems: "center", mt: 1 }}>
                     <LinearProgress
                       variant="determinate"
-                      value={((suite.tests - suite.failures - suite.errors - suite.skipped) / suite.tests) * 100}
+                      value={
+                        ((suite.tests -
+                          suite.failures -
+                          suite.errors -
+                          suite.skipped) /
+                          suite.tests) *
+                        100
+                      }
                       sx={{ flex: 1, mr: 1 }}
-                      color={(suite.tests - suite.failures - suite.errors - suite.skipped) === suite.tests ? "success" : "primary"}
+                      color={
+                        suite.tests -
+                          suite.failures -
+                          suite.errors -
+                          suite.skipped ===
+                        suite.tests
+                          ? "success"
+                          : "primary"
+                      }
                     />
                     <Typography variant="body2" color="text.secondary">
-                      {(((suite.tests - suite.failures - suite.errors - suite.skipped) / suite.tests) * 100).toFixed(1)}%
+                      {(
+                        ((suite.tests -
+                          suite.failures -
+                          suite.errors -
+                          suite.skipped) /
+                          suite.tests) *
+                        100
+                      ).toFixed(1)}
+                      %
                     </Typography>
                   </Box>
                 </Box>
@@ -180,6 +233,13 @@ export function TestReport({ report }: TestReportProps) {
       </Box>
 
       <Box sx={{ flex: 1, p: 2 }}>
+      {path && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" color="text.secondary">
+            {path}
+          </Typography>
+          </Box>
+        )}
         <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
           <StatusChip
             label="Passed"
@@ -224,11 +284,11 @@ export function TestReport({ report }: TestReportProps) {
             key={index}
             role="tabpanel"
             hidden={activeTab !== index}
-            sx={{ height: 'calc(100% - 48px)' }}
+            sx={{ height: "calc(100% - 96px)" }}
           >
             {activeTab === index && (
               <Virtuoso
-                style={{ height: '100%' }}
+                style={{ height: "100%" }}
                 data={filteredTestcases[index].testcases}
                 itemContent={(index, testCase) => (
                   <TestCaseItem key={index} testCase={testCase} />

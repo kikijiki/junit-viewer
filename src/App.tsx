@@ -9,14 +9,19 @@ import {
   createTheme,
   IconButton,
 } from "@mui/material";
+import { basename } from "@tauri-apps/api/path";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { exists, readTextFile } from "@tauri-apps/plugin-fs";
 import { XMLParser } from "fast-xml-parser";
 import { useState, useEffect, useCallback } from "react";
 
-import { FileDropZone } from "./components/FileDropZone";
+import { EmptyTab } from "./components/EmptyTab";
 import { TestReport } from "./components/TestReport";
 import { JUnitReport, TestCase, TestSuite } from "./types/junit";
 import { JUnitXMLRoot, JUnitXMLTestSuite, JUnitXMLTestCase } from "./types/xml";
 
+const RECENT_FILES_KEY = "recentFiles";
+const MAX_RECENT_FILES = 10;
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -27,6 +32,7 @@ interface TabPanelProps {
 interface ReportTab {
   id: string;
   name: string;
+  path: string;
   report?: JUnitReport;
 }
 
@@ -55,6 +61,35 @@ function TabPanel(props: TabPanelProps) {
 function App() {
   const [tabs, setTabs] = useState<ReportTab[]>([]);
   const [activeTab, setActiveTab] = useState(0);
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
+
+  useEffect(() => {
+    const loadRecentFiles = async () => {
+      const stored = localStorage.getItem(RECENT_FILES_KEY);
+      if (stored) {
+        const files = JSON.parse(stored);
+        // Filter out files that don't exist
+        const existingFiles = [];
+        for (const file of files) {
+          if (await exists(file)) {
+            existingFiles.push(file);
+          }
+        }
+        setRecentFiles(existingFiles);
+      }
+    };
+    loadRecentFiles();
+  }, []);
+
+  const updateRecentFiles = (paths: string[]) => {
+    setRecentFiles((prev) => {
+      const newFiles = [...paths, ...prev].filter((file, index, self) =>
+        self.indexOf(file) === index
+      ).slice(0, MAX_RECENT_FILES);
+      localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(newFiles));
+      return newFiles;
+    });
+  };
 
   const handleCloseTab = useCallback((tabIndex: number) => {
     setTabs((prevTabs) => {
@@ -78,85 +113,110 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTab, handleCloseTab]);
 
-  const handleFileSelect = async (files: File[]) => {
-    const parser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: "",
-      textNodeName: "_",
-      isArray: (name) => ["testsuite", "testcase", "property"].includes(name.toLowerCase()),
-    });
-
-    const newTabs: ReportTab[] = [];
-    for (const file of files) {
-      try {
-        const text = await file.text();
-        const result = parser.parse(text) as JUnitXMLRoot;
-
-        let junitReport: JUnitReport;
-
-        if (result.testsuites) {
-          const suites = Array.isArray(result.testsuites.testsuite)
-            ? result.testsuites.testsuite
-            : [result.testsuites.testsuite];
-          const processedSuites = suites.map(processTestSuite);
-          const totalTests = processedSuites.reduce(
-            (sum, s) => sum + s.tests,
-            0
-          );
-          const totalFailures = processedSuites.reduce(
-            (sum, s) => sum + s.failures,
-            0
-          );
-          const totalErrors = processedSuites.reduce(
-            (sum, s) => sum + s.errors,
-            0
-          );
-          const totalSkipped = processedSuites.reduce(
-            (sum, s) => sum + s.skipped,
-            0
-          );
-          const totalTime = processedSuites.reduce((sum, s) => sum + s.time, 0);
-
-          junitReport = {
-            name: result.testsuites.name || "Test Results",
-            tests: parseInt(result.testsuites.tests) || totalTests,
-            failures: parseInt(result.testsuites.failures) || totalFailures,
-            errors: parseInt(result.testsuites.errors) || totalErrors,
-            skipped: parseInt(result.testsuites.skipped) || totalSkipped,
-            time: parseFloat(result.testsuites.time) || totalTime,
-            timestamp: result.testsuites.timestamp || "",
-            testsuites: processedSuites,
-          };
-        } else if (result.testsuite) {
-          const processedSuite = processTestSuite(result.testsuite);
-          junitReport = {
-            name: processedSuite.name || "Test Results",
-            tests: processedSuite.tests,
-            failures: processedSuite.failures,
-            errors: processedSuite.errors,
-            skipped: processedSuite.skipped,
-            time: processedSuite.time,
-            timestamp: processedSuite.timestamp,
-            testsuites: [processedSuite],
-          };
-        } else {
-          throw new Error("Invalid JUnit XML format");
+  useEffect(() => {
+    const setupDragDrop = async () => {
+      const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        if (event.payload.type === 'drop') {
+          handleFileSelect(event.payload.paths);
         }
+      });
+      return unlisten;
+    };
 
+    const cleanup = setupDragDrop();
+    return () => {
+      cleanup.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  const loadJUnitFile = async (path: string): Promise<JUnitReport | null> => {
+    try {
+      const content = await readTextFile(path);
+      const parser = new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: "",
+        textNodeName: "_",
+        isArray: (name) =>
+          ["testsuite", "testcase", "property"].includes(name.toLowerCase()),
+      });
+
+      const xml = parser.parse(content) as JUnitXMLRoot;
+
+      if (xml.testsuites) {
+        const suites = Array.isArray(xml.testsuites.testsuite)
+          ? xml.testsuites.testsuite
+          : [xml.testsuites.testsuite];
+        const processedSuites = suites.map(processTestSuite);
+        const totalTests = processedSuites.reduce((sum, s) => sum + s.tests, 0);
+        const totalFailures = processedSuites.reduce((sum, s) => sum + s.failures, 0);
+        const totalErrors = processedSuites.reduce((sum, s) => sum + s.errors, 0);
+        const totalSkipped = processedSuites.reduce((sum, s) => sum + s.skipped, 0);
+        const totalTime = processedSuites.reduce((sum, s) => sum + s.time, 0);
+
+        return {
+          name: xml.testsuites.name || "Test Results",
+          tests: parseInt(xml.testsuites.tests) || totalTests,
+          failures: parseInt(xml.testsuites.failures) || totalFailures,
+          errors: parseInt(xml.testsuites.errors) || totalErrors,
+          skipped: parseInt(xml.testsuites.skipped) || totalSkipped,
+          time: parseFloat(xml.testsuites.time) || totalTime,
+          timestamp: xml.testsuites.timestamp || "",
+          testsuites: processedSuites,
+        };
+      } else if (xml.testsuite) {
+        const processedSuite = processTestSuite(xml.testsuite);
+        return {
+          name: processedSuite.name || "Test Results",
+          tests: processedSuite.tests,
+          failures: processedSuite.failures,
+          errors: processedSuite.errors,
+          skipped: processedSuite.skipped,
+          time: processedSuite.time,
+          timestamp: processedSuite.timestamp,
+          testsuites: [processedSuite],
+        };
+      }
+      throw new Error("Invalid JUnit XML format");
+    } catch (error) {
+      console.error("Error loading file:", error);
+      return null;
+    }
+  };
+
+  const handleFileSelect = async (paths: string[]) => {
+    const newTabs: ReportTab[] = [];
+    const existingPaths = new Set(tabs.map((tab) => tab.path));
+
+    for (const path of paths) {
+      if (existingPaths.has(path)) continue;
+
+      const report = await loadJUnitFile(path);
+      if (report) {
+        const name = await basename(path);
         newTabs.push({
           id: crypto.randomUUID(),
-          name: file.name,
-          report: junitReport,
+          name,
+          path,
+          report,
         });
-      } catch (error) {
-        console.error("Error parsing file:", error);
       }
     }
 
     if (newTabs.length > 0) {
       setTabs((currentTabs) => [...currentTabs, ...newTabs]);
-      // Set active tab to the first new tab
       setActiveTab(tabs.length + newTabs.length - 1);
+      updateRecentFiles(paths);
+    }
+  };
+
+  const handleReload = async (path: string) => {
+    const report = await loadJUnitFile(path);
+    if (report) {
+      setTabs((currentTabs) =>
+        currentTabs.map((tab) =>
+          tab.path === path ? { ...tab, report } : tab
+        )
+      );
     }
   };
 
@@ -195,14 +255,16 @@ function App() {
               name: tc.name,
               classname: tc.classname,
               time: parseFloat(tc.time) || 0,
-              properties: tc.properties ? (Array.isArray(tc.properties.property)
-                ? tc.properties.property
-                : [tc.properties.property]
-              ).map(prop => ({
-                name: prop.name,
-                value: prop.value,
-                text: prop._
-              })) : undefined,
+              properties: tc.properties
+                ? (Array.isArray(tc.properties.property)
+                    ? tc.properties.property
+                    : [tc.properties.property]
+                  ).map((prop) => ({
+                    name: prop.name,
+                    value: prop.value,
+                    text: prop._,
+                  }))
+                : undefined,
               failure: tc.failure
                 ? {
                     message: tc.failure.message || "",
@@ -316,38 +378,18 @@ function App() {
           {tabs.map((tab, tabIndex) => (
             <TabPanel key={tab.id} value={activeTab} index={tabIndex}>
               {tab.report ? (
-                <TestReport report={tab.report} />
+                <TestReport
+                  report={tab.report}
+                  path={tab.path}
+                  onReload={() => handleReload(tab.path)}
+                />
               ) : (
-                <Box
-                  sx={{
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Box sx={{ width: "100%", maxWidth: 600 }}>
-                    <FileDropZone
-                      onFileSelect={(files) => handleFileSelect(files)}
-                    />
-                  </Box>
-                </Box>
+                <EmptyTab onFileSelect={handleFileSelect} recentFiles={recentFiles} />
               )}
             </TabPanel>
           ))}
           <TabPanel value={activeTab} index={tabs.length}>
-            <Box
-              sx={{
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Box sx={{ width: "100%", maxWidth: 600 }}>
-                <FileDropZone onFileSelect={handleFileSelect} />
-              </Box>
-            </Box>
+            <EmptyTab onFileSelect={handleFileSelect} recentFiles={recentFiles} />
           </TabPanel>
         </Box>
       </Container>
