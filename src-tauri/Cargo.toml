@@ -1,8 +1,8 @@
 [package]
 name = "junit-viewer"
-version = "0.1.0"
+version = "0.1.1"
 description = "A JUnit Viewer"
-authors = ["MAtteo Bernacchia <dev@kikijiki.com>"]
+authors = ["Matteo Bernacchia <dev@kikijiki.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
